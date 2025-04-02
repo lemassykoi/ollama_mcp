@@ -89,3 +89,6 @@ To use these scripts, follow the steps below:
 The provided scripts, `mcp_client_v2.py` and `main.py`, demonstrate how to create a multi-server MCP client that supports connecting to multiple servers, processing queries, and dispatching tool calls based on the call type (tool or resource). The client allows for interoperability with various MCP servers and enables models to communicate effectively with tools and resources in an extensible manner.
 
 These scripts serve as a foundation for building more complex applications that leverage the power of multiple servers using the Model Context Protocol (MCP). By following the documentation and usage instructions provided, you can extend and customize these scripts to meet your specific requirements and integrate them into larger systems seamlessly.
+
+## Thanks
+Thanks to @ggozad : https://github.com/ggozad/oterm
