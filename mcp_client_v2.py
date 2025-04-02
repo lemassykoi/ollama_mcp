@@ -1,6 +1,5 @@
 import asyncio
 import shlex
-import inspect
 from typing import List, Optional, Dict, Any, Mapping
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
