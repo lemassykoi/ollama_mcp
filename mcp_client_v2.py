@@ -7,11 +7,20 @@ from mcp.client.stdio import stdio_client
 from mcp.types import Resource, Tool
 import requests
 import json
-from utils import BLUE, YELLOW, MAGENTA, CYAN, RESET
-from ollama_settings import OLLAMA_BASE_URL
+import colorama
 import os
 import logging
 import urllib.parse
+
+B_RED        = colorama.Back.RED
+RED          = colorama.Fore.RED
+BLUE         = colorama.Fore.BLUE
+CYAN         = colorama.Fore.CYAN
+GREEN        = colorama.Fore.GREEN
+YELLOW       = colorama.Fore.YELLOW
+MAGENTA      = colorama.Fore.MAGENTA
+YELLOW_LIGHT = colorama.Fore.LIGHTYELLOW_EX
+RESET        = colorama.Style.RESET_ALL
 
 ## MODELS
 model = "llama3-groq-tool-use:8b-q8_0"
@@ -24,6 +33,7 @@ OLLAMA_TEMPERATURE: float = 0.0
 OLLAMA_SEED: int = 1234567890
 
 # Global URL and model settings for the Ollama API.
+OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 
 # Initialize logger
