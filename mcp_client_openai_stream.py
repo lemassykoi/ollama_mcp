@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 CLI client pour un LLM OpenAI-compatible + plusieurs serveurs MCP locaux.
-
 LM Studio:
     - Context Length : 32768
     - Evaluation batch size : 8192
@@ -19,6 +18,8 @@ import asyncio
 import logging
 from contextlib import AsyncExitStack
 from rich.console import Console
+from rich.markdown import Markdown
+from rich.live import Live
 
 # ----------------------------- Imports -----------------------------
 try:
@@ -51,7 +52,7 @@ console = Console()
 API_KEY  = os.getenv("OPENAI_API_KEY", "lmstudio")
 if API_KEY == "lmstudio":
     logger.warning('⚠️  No OpenAI API Key found, using default.')
-API_BASE = "http://192.168.0.123:1234/v1"
+API_BASE = "http://192.168.10.123:1234/v1"
 DEBUG    = True
 APPROVE  = "Strict"  # False, True, "Strict"
 
@@ -156,96 +157,81 @@ async def interactive_loop(all_sessions, openai_tools, tool_sessions):
         start_ns = time.perf_counter_ns()
 
         while True:
-            # --- MODIFICATION: STREAMING ENABLED ---
-            # We set stream=True to get a generator of response chunks
             stream = client.chat.completions.create(
                 model       = MODEL_NAME,
                 messages    = messages,
                 tools       = openai_tools,
                 temperature = TEMPERATURE,
                 seed        = SEED,
-                stream      = True, # <-- ENABLED STREAMING
+                stream      = True,
             )
 
-            # Variables to accumulate the streamed response
-            in_progress_tool_calls = {} # Key: index, Value: dict of tool call info
+            in_progress_tool_calls = {}
             full_content = ""
             is_tool_call_response = False
+            usage_info = None
             
             console.print("\n[bold cyan]=== Réponse du modèle ===[/bold cyan]")
 
-            # Iterate over each chunk from the stream
-            for chunk in stream:
-                delta = chunk.choices[0].delta
-                
-                # 1. Stream and accumulate content for a text response
-                if delta.content:
-                    # Print the content part immediately to the user
-                    console.out(delta.content, end="")
-                    sys.stdout.flush()
-                    # Accumulate for the history
-                    full_content += delta.content
+            # --- MODIFICATION: USE RICH LIVE FOR MARKDOWN STREAMING ---
+            with Live(console=console, auto_refresh=False, vertical_overflow="visible") as live:
+                for chunk in stream:
+                    delta = chunk.choices[0].delta
+                    
+                    # 1. Stream and accumulate content for a text response
+                    if delta and delta.content:
+                        full_content += delta.content
+                        # Re-render the entire accumulated content as Markdown
+                        live.update(Markdown(full_content), refresh=True)
 
-                # 2. Stream and reconstruct tool calls
-                if delta.tool_calls:
-                    is_tool_call_response = True
-                    for tc_chunk in delta.tool_calls:
-                        index = tc_chunk.index
-                        
-                        # If we see a new tool call index, initialize its structure
-                        if index not in in_progress_tool_calls:
-                            in_progress_tool_calls[index] = {
-                                "id": "", "type": "function", "function": {"name": "", "arguments": ""}
-                            }
-                        
-                        # Accumulate ID
-                        if tc_chunk.id:
-                            in_progress_tool_calls[index]["id"] = tc_chunk.id
-                        
-                        # Accumulate function name
-                        if tc_chunk.function and tc_chunk.function.name:
-                            in_progress_tool_calls[index]["function"]["name"] += tc_chunk.function.name
-                            # Print a message as soon as we know which tool is being called
-                            console.print(f"\n[yellow]🔧 Appel d'outil détecté : {in_progress_tool_calls[index]['function']['name']}(...)[/yellow]")
+                    # 2. Stream and reconstruct tool calls
+                    if delta and delta.tool_calls:
+                        is_tool_call_response = True
+                        for tc_chunk in delta.tool_calls:
+                            index = tc_chunk.index
+                            if index not in in_progress_tool_calls:
+                                in_progress_tool_calls[index] = {
+                                    "id": "", "type": "function", "function": {"name": "", "arguments": ""}
+                                }
+                            if tc_chunk.id:
+                                in_progress_tool_calls[index]["id"] = tc_chunk.id
+                            if tc_chunk.function and tc_chunk.function.name:
+                                in_progress_tool_calls[index]["function"]["name"] += tc_chunk.function.name
+                            if tc_chunk.function and tc_chunk.function.arguments:
+                                in_progress_tool_calls[index]["function"]["arguments"] += tc_chunk.function.arguments
 
-                        # Accumulate function arguments
-                        if tc_chunk.function and tc_chunk.function.arguments:
-                            in_progress_tool_calls[index]["function"]["arguments"] += tc_chunk.function.arguments
-
-                # 3. Check for usage stats in the final chunk
-                if chunk.usage:
-                    elapsed_ns = time.perf_counter_ns() - start_ns
-                    usage = chunk.usage
-                    print(
-                        f"\n\n⏱️ Temps de traitement : {nanosecondes_vers_lisible(elapsed_ns)}\n"
-                        f"📊 Tokens : prompt={usage.prompt_tokens}, "
-                        f"completion={usage.completion_tokens}, total={usage.total_tokens}"
-                    )
-
-            # --- END OF STREAM PROCESSING ---
-            console.print("\n[bold cyan]=========================[/bold cyan]")
-
-            # Now, decide what to do based on the accumulated response
+                    # 3. Capture usage stats from the final chunk
+                    if chunk.usage:
+                        usage_info = chunk.usage
             
-            # If it was a text response, add it to history and break to wait for user input
+            # --- END OF STREAM & LIVE DISPLAY ---
+            
+            # Print usage info if available
+            if usage_info:
+                elapsed_ns = time.perf_counter_ns() - start_ns
+                print(
+                    f"\n⏱️ Temps de traitement : {nanosecondes_vers_lisible(elapsed_ns)}\n"
+                    f"📊 Tokens : prompt={usage_info.prompt_tokens}, "
+                    f"completion={usage_info.completion_tokens}, total={usage_info.total_tokens}"
+                )
+
+            console.print("[bold cyan]=========================[/bold cyan]")
+
             if not is_tool_call_response:
                 messages.append({"role": "assistant", "content": full_content})
                 print("\n🗨️ (Ctrl-D pour quitter) :")
                 break
 
-            # If it was a tool call response, prepare and execute the calls
-            # Finalize the list of tool calls from the in-progress dictionary
+            # --- Tool Call Execution Logic (remains mostly the same) ---
             completed_tool_calls = [v for k, v in sorted(in_progress_tool_calls.items())]
             
-            # Add the assistant's message (with tool calls) to history
             assistant_msg = {
                 "role": "assistant",
-                "content": None, # No direct text content when making tool calls
+                "content": None,
                 "tool_calls": completed_tool_calls
             }
             messages.append(assistant_msg)
 
-            # Execute each completed tool call
             for tc in completed_tool_calls:
                 tool_name = tc["function"]["name"]
                 raw_args = tc["function"]["arguments"]
@@ -268,14 +254,12 @@ async def interactive_loop(all_sessions, openai_tools, tool_sessions):
                 console.print(f"[green]✅ Résultat de {tool_name} :[/green]")
                 console.print(tool_output)
 
-                # Add the tool's output to the message history for the next LLM call
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": tool_output,
                 })
             
-            # Loop back to call the LLM again with the tool results in context
             console.print("\n[bold blue]... Renvoi des résultats de l'outil au modèle ...[/bold blue]")
 
 
@@ -286,34 +270,20 @@ async def run():
     tool_sessions = {}
 
     async with AsyncExitStack() as stack:
-        # Ouvre et garde TOUTES les connexions MCP pendant tout le REPL
         for idx, params in enumerate(MCP_SERVERS):
             prefix = os.path.splitext(os.path.basename(params.args[0]))[0]
-
-            # 1) ouvrir le transport stdio
             read, write = await stack.enter_async_context(stdio_client(params))
-
-            # 2) ouvrir la session protocole MCP
             session = ClientSession(read, write)
             await stack.enter_async_context(session)
-
-            # 3) initialiser la session
             await session.initialize()
             sessions.append(session)
-
-            # 4) récupérer les tools de CE serveur
             tools_result = await session.list_tools()
             mcp_tools = getattr(tools_result, "tools", tools_result)
-
             print(f" 🔧 Outils MCP ({prefix}):\n", [t.name for t in mcp_tools])
-
-            # 5) exposer ces tools au LLM avec un préfixe pour le routage
             openai_tools.extend(mcp_tools_to_openai(mcp_tools, prefix))
             for t in mcp_tools:
                 tool_sessions[f"{prefix}.{t.name}"] = session
 
-        # 👉 Toutes les connexions sont maintenant ouvertes et stables.
-        # On peut lancer le REPL ; l’ExitStack fermera proprement à la sortie.
         await interactive_loop(sessions, openai_tools, tool_sessions)
 
 
